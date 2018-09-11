@@ -173,7 +173,7 @@ class RemoteSparkMagics(SparkMagicBase):
                                           args.maxrows, args.samplefraction, args.session, coerce)
             elif args.context == CONTEXT_NAME_SQL:
                 return self.execute_sqlquery(cell, args.samplemethod, args.maxrows, args.samplefraction,
-                                             args.session, args.output, args.quiet, coerce)
+                                             args.session, args.output, args.quiet, args.store, coerce)
             else:
                 self.ipython_display.send_error("Context '{}' not found".format(args.context))
         # error
@@ -189,6 +189,6 @@ class RemoteSparkMagics(SparkMagicBase):
         {}
 """.format("\n".join(sessions_info), conf.session_configs()))
 
-        
+
 def load_ipython_extension(ip):
     ip.register_magics(RemoteSparkMagics)

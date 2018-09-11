@@ -1,3 +1,4 @@
+import re
 from hdijupyterutils.guid import ObjectWithGuid
 
 from sparkmagic.utils.utils import coerce_pandas_df_to_numeric_datetime, records_to_dataframe
@@ -9,9 +10,9 @@ from .exceptions import DataFrameParseException, BadUserDataException
 
 
 class SQLQuery(ObjectWithGuid):
-    def __init__(self, query, samplemethod=None, maxrows=None, samplefraction=None, spark_events=None, coerce=None):
+    def __init__(self, query, samplemethod=None, maxrows=None, samplefraction=None, spark_events=None, store_variable=None, coerce=None):
         super(SQLQuery, self).__init__()
-        
+
         if samplemethod is None:
             samplemethod = conf.default_samplemethod()
         if maxrows is None:
@@ -27,6 +28,7 @@ class SQLQuery(ObjectWithGuid):
             raise BadUserDataException(u'samplefraction (-r) must be a float between 0.0 and 1.0')
 
         self.query = query
+        self.store_variable = store_variable
         self.samplemethod = samplemethod
         self.maxrows = maxrows
         self.samplefraction = samplefraction
@@ -70,7 +72,19 @@ class SQLQuery(ObjectWithGuid):
 
 
     def _pyspark_command(self, sql_context_variable_name, encode_result=True):
-        command = u'{}.sql(u"""{} """).toJSON()'.format(sql_context_variable_name, self.query)
+        format_variables = re.findall(r'{([^{}]*)}', self.query)
+        if format_variables:
+            query = u'u"""{} """.format({})'.format(
+                self.query,
+                u', '.join(u'{varname}={varname}'.format(varname=varname) for varname in format_variables)
+            )
+        else:
+            query = u'u"""{} """'.format(self.query)
+        if self.store_variable:
+            pre_command = u'{} = {}.sql({})'.format(self.store_variable, sql_context_variable_name, query)
+            command = u'{}.toJSON()'.format(self.store_variable)
+        else:
+            command = u'{}.sql({}).toJSON()'.format(sql_context_variable_name, query)
         if self.samplemethod == u'sample':
             command = u'{}.sample(False, {})'.format(command, self.samplefraction)
         if self.maxrows >= 0:
@@ -86,6 +100,8 @@ class SQLQuery(ObjectWithGuid):
         command = u'for {} in {}: print({})'.format(constants.LONG_RANDOM_VARIABLE_NAME,
                                                     command,
                                                     print_command)
+        if self.store_variable:
+            command = u'{}\n{}'.format(pre_command, command)
         return Command(command)
 
     def _scala_command(self, sql_context_variable_name):
