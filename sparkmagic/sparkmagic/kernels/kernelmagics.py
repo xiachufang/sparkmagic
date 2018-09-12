@@ -13,15 +13,13 @@ from hdijupyterutils.utils import generate_uuid
 
 import sparkmagic.utils.configuration as conf
 from sparkmagic.utils.configuration import get_livy_kind
-from sparkmagic.utils import constants
 from sparkmagic.utils.utils import parse_argstring_or_throw, get_coerce_value
 from sparkmagic.utils.sparkevents import SparkEvents
 from sparkmagic.utils.constants import LANGS_SUPPORTED
-from sparkmagic.livyclientlib.command import Command
 from sparkmagic.livyclientlib.endpoint import Endpoint
 from sparkmagic.magics.sparkmagicsbase import SparkMagicBase
 from sparkmagic.livyclientlib.exceptions import handle_expected_exceptions, wrap_unexpected_exceptions, \
-    BadUserDataException
+    BadUserDataException, HttpClientException
 
 
 def _event(f):
@@ -210,10 +208,10 @@ class KernelMagics(SparkMagicBase):
                                                              "of this name in user's local context.")
     @argument("-m", "--samplemethod", type=str, default=None, help="Sample method for dataframe: either take or sample")
     @argument("-n", "--maxrows", type=int, default=None, help="Maximum number of rows that will be pulled back "
-                                                                        "from the dataframe on the server for storing")
+                                                              "from the dataframe on the server for storing")
     @argument("-r", "--samplefraction", type=float, default=None, help="Sample fraction for sampling from dataframe")
     @argument("-c", "--coerce", type=str, default=None, help="Whether to automatically coerce the types (default, pass True if being explicit) "
-                                                                        "of the dataframe or not (pass False)")
+                                                             "of the dataframe or not (pass False)")
     @wrap_unexpected_exceptions
     @handle_expected_exceptions
     def spark(self, line, cell="", local_ns=None):
@@ -234,10 +232,10 @@ class KernelMagics(SparkMagicBase):
     @argument("-q", "--quiet", type=bool, default=False, const=True, nargs="?", help="Return None instead of the dataframe.")
     @argument("-m", "--samplemethod", type=str, default=None, help="Sample method for SQL queries: either take or sample")
     @argument("-n", "--maxrows", type=int, default=None, help="Maximum number of rows that will be pulled back "
-                                                                        "from the server for SQL queries")
+                                                              "from the server for SQL queries")
     @argument("-r", "--samplefraction", type=float, default=None, help="Sample fraction for sampling from SQL queries")
     @argument("-c", "--coerce", type=str, default=None, help="Whether to automatically coerce the types (default, pass True if being explicit) "
-                                                                        "of the dataframe or not (pass False)")
+                                                             "of the dataframe or not (pass False)")
     @argument("-s", "--store", type=str, default=None, help="If present, the result will be stored in variable of this "
                                                             "name in remote spark application.")
     @wrap_unexpected_exceptions
@@ -312,7 +310,24 @@ class KernelMagics(SparkMagicBase):
             self.ipython_display.send_error(self.fatal_error_message)
             return False
 
-        if not self.session_started:
+        if self.session_started:
+            session = self.spark_controller.get_session_by_name_or_default(None)
+            try:
+                app_state = session.get_app_state()
+            except HttpClientException as e:
+                self.logger.info(u"Error getting state of session: {}".format(e))
+                app_state = 'dead'
+                should_start = True
+            if app_state in ('dead', ''):
+                self.logger.info(u"Last session dead {}. Need to restart.".format(session.id))
+                self.spark_controller.delete_session_by_id(self.endpoint, session.id)
+                should_start = True
+            else:
+                should_start = False
+        else:
+            should_start = True
+
+        if should_start:
             skip = False
             properties = conf.get_session_properties(self.language)
             self.session_started = True
