@@ -53,8 +53,9 @@ class SparkKernelBase(IPythonKernel):
         return wrap_unexpected_exceptions(f, self._complete_cell)(self)
 
     def do_shutdown(self, restart):
-        # Cleanup
-        self._delete_session()
+        if conf.if_delete_session_when_existing():
+            # Cleanup
+            self._delete_session()
 
         return self._do_shutdown_ipykernel(restart)
 
