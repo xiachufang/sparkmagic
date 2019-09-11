@@ -1,4 +1,5 @@
 ﻿# Distributed under the terms of the Modified BSD License.
+import os
 import threading
 from time import sleep, time
 
@@ -9,16 +10,17 @@ import sparkmagic.utils.constants as constants
 from sparkmagic.utils.sparklogger import SparkLog
 from sparkmagic.utils.sparkevents import SparkEvents
 from sparkmagic.utils.utils import get_sessions_info_html
+from sparkmagic.utils.session_id import get_spark_profile_name
 from .configurableretrypolicy import ConfigurableRetryPolicy
 from .command import Command
-from .exceptions import LivyClientTimeoutException, \
+from .exceptions import LivyClientTimeoutException, HttpClientException, \
     LivyUnexpectedStatusException, BadUserDataException, SqlContextNotFoundException
 
 
 class _HeartbeatThread(threading.Thread):
     def __init__(self, livy_session, refresh_seconds, retry_seconds, run_at_most=None):
         super(_HeartbeatThread, self).__init__()
-        
+
         self.livy_session = livy_session
         self.refresh_seconds = refresh_seconds
         self.retry_seconds = retry_seconds
@@ -30,7 +32,7 @@ class _HeartbeatThread(threading.Thread):
             self.livy_session.logger.info(u'Starting heartbeat for session {}'.format(self.livy_session.id))
         else:
             self.livy_session.logger.info(u'Will not start heartbeat because session is none')
-        
+
         while self.livy_session is not None:
             try:
                 self.livy_session.refresh_status_and_info()
@@ -38,17 +40,17 @@ class _HeartbeatThread(threading.Thread):
             except Exception as e:
                 self.livy_session.logger.error(u'{}'.format(e))
                 sleep(self.retry_seconds)
-            
+
             if self.run_at_most is not None:
                 i += 1
-                
+
                 if i >= self.run_at_most:
                     return
 
     def stop(self):
         if self.livy_session is not None:
             self.livy_session.logger.info(u'Stopping heartbeat for session {}'.format(self.livy_session.id))
-        
+
         self.livy_session = None
         self.join()
 
@@ -98,7 +100,7 @@ class LivySession(ObjectWithGuid):
         self.kind = kind
         self.id = session_id
         self.session_info = u""
-        
+
         self._heartbeat_thread = None
         if session_id == -1:
             self.status = constants.NOT_STARTED_SESSION_STATUS
@@ -112,6 +114,22 @@ class LivySession(ObjectWithGuid):
 
     def start(self):
         """Start the session against actual livy server."""
+        if conf.reuse_sessions():
+            dead = True
+            try:
+                # To see if the session works properly.
+                if self.get_app_state() not in ('dead', ''):
+                    dead = False
+                session_id = self.get_app_id()
+            except HttpClientException:
+                self.ipython_display.writeln(u'Spark session already dead')
+            else:
+                if not dead and self.status not in (constants.NOT_STARTED_SESSION_STATUS, constants.ERROR_SESSION_STATUS, constants.DEAD_SESSION_STATUS):
+                    self.ipython_display.writeln(u'Using existing session {}... Have fun!'.format(session_id))
+                    self.set_session_context()
+                    self.execute_profile()
+                    return
+
         self._spark_events.emit_session_creation_start_event(self.guid, self.kind)
         self._printed_resource_warning = False
 
@@ -121,10 +139,10 @@ class LivySession(ObjectWithGuid):
             self.status = str(r[u"state"])
 
             self.ipython_display.writeln(u"Starting Spark application")
-            
+
             # Start heartbeat thread to keep Livy interactive session alive.
             self._start_heartbeat_thread()
-            
+
             # We wait for livy_session_startup_timeout_seconds() for the session to start up.
             try:
                 self.wait_for_idle(conf.livy_session_startup_timeout_seconds())
@@ -135,30 +153,44 @@ class LivySession(ObjectWithGuid):
             html = get_sessions_info_html([self], self.id)
             self.ipython_display.html(html)
 
-            command = Command("spark")
-            (success, out) = command.execute(self)
+            self.set_session_context()
+            self.execute_profile()
 
-            if success:
-                self.ipython_display.writeln(u"SparkSession available as 'spark'.")
-                self.sql_context_variable_name = "spark"
-            else:
-                command = Command("sqlContext")
-                (success, out) = command.execute(self)
-                if success:
-                    self.ipython_display.writeln(u"SparkContext available as 'sc'.")
-                    if ("hive" in out.lower()):
-                        self.ipython_display.writeln(u"HiveContext available as 'sqlContext'.")
-                    else:
-                        self.ipython_display.writeln(u"SqlContext available as 'sqlContext'.")
-                    self.sql_context_variable_name = "sqlContext"
-                else:
-                    raise SqlContextNotFoundException(u"Neither SparkSession nor HiveContext/SqlContext is available.")
         except Exception as e:
             self._spark_events.emit_session_creation_end_event(self.guid, self.kind, self.id, self.status,
                                                                False, e.__class__.__name__, str(e))
             raise
         else:
             self._spark_events.emit_session_creation_end_event(self.guid, self.kind, self.id, self.status, True, "", "")
+
+    def set_session_context(self):
+        command = Command("spark")
+        (success, out) = command.execute(self)
+        if success:
+            self.ipython_display.writeln(u"SparkSession available as 'spark'.")
+            self.sql_context_variable_name = "spark"
+        else:
+            command = Command("sqlContext")
+            (success, out) = command.execute(self)
+            if success:
+                self.ipython_display.writeln(u"SparkContext available as 'sc'.")
+                if ("hive" in out.lower()):
+                    self.ipython_display.writeln(u"HiveContext available as 'sqlContext'.")
+                else:
+                    self.ipython_display.writeln(u"SqlContext available as 'sqlContext'.")
+                self.sql_context_variable_name = "sqlContext"
+            else:
+                raise SqlContextNotFoundException(u"Neither SparkSession nor HiveContext/SqlContext is available.")
+
+    def execute_profile(self):
+        spark_profile_name = get_spark_profile_name()
+        if os.path.isfile(spark_profile_name):
+            command = Command("{}".format(open(spark_profile_name).read()))
+            (success, out) = command.execute(self)
+            if success:
+                self.logger.debug(u"Executed spark profile '{}'".format(spark_profile_name))
+            else:
+                raise Exception("Execute spark profile failed.")
 
     def get_app_id(self):
         if self._app_id is None:
@@ -168,6 +200,9 @@ class LivySession(ObjectWithGuid):
     def get_app_info(self):
         appInfo = self._http_client.get_session(self.id).get("appInfo")
         return appInfo if appInfo is not None else {}
+
+    def get_app_state(self):
+        return self._http_client.get_session(self.id).get("state", "")
 
     def get_app_info_member(self, member_name):
         return self.get_app_info().get(member_name)
@@ -201,7 +236,7 @@ class LivySession(ObjectWithGuid):
 
         try:
             self.logger.debug(u"Deleting session '{}'".format(session_id))
-            
+
             if self.status != constants.NOT_STARTED_SESSION_STATUS:
                 self._http_client.delete_session(session_id)
                 self._stop_heartbeat_thread()
@@ -210,7 +245,7 @@ class LivySession(ObjectWithGuid):
             else:
                 self.ipython_display.send_error(u"Cannot delete session {} that is in state '{}'."
                                                 .format(session_id, self.status))
-            
+
         except Exception as e:
             self._spark_events.emit_session_deletion_end_event(self.guid, self.kind, session_id, self.status, False,
                                                                e.__class__.__name__, str(e))
@@ -246,8 +281,8 @@ class LivySession(ObjectWithGuid):
                 raise LivyClientTimeoutException(error)
 
             if constants.YARN_RESOURCE_LIMIT_MSG in self.session_info and \
-                not self._printed_resource_warning:
-                self.ipython_display.send_error(constants.RESOURCE_LIMIT_WARNING\
+                    not self._printed_resource_warning:
+                self.ipython_display.send_error(constants.RESOURCE_LIMIT_WARNING
                                                 .format(conf.resource_limit_mitigation_suggestion()))
                 self._printed_resource_warning = True
 
@@ -274,18 +309,18 @@ class LivySession(ObjectWithGuid):
             self.status = status
             self.session_info = u"\n".join(log_array)
         else:
-           raise LivyUnexpectedStatusException(u"Status '{}' not supported by session.".format(status))
+            raise LivyUnexpectedStatusException(u"Status '{}' not supported by session.".format(status))
 
     def _start_heartbeat_thread(self):
         if self._should_heartbeat and self._heartbeat_thread is None:
             refresh_seconds = conf.heartbeat_refresh_seconds()
             retry_seconds = conf.heartbeat_retry_seconds()
-            
+
             if self._user_passed_heartbeat_thread is None:
                 self._heartbeat_thread = _HeartbeatThread(self, refresh_seconds, retry_seconds)
             else:
                 self._heartbeat_thread = self._user_passed_heartbeat_thread
-            
+
             self._heartbeat_thread.daemon = True
             self._heartbeat_thread.start()
 

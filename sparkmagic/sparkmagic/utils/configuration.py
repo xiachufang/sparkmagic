@@ -141,6 +141,31 @@ def wait_for_idle_timeout_seconds():
 
 
 @_with_override
+def spark_session_id_dir():
+    return 'user_session'
+
+
+@_with_override
+def jupyter_dir():
+    return '/'
+
+
+@_with_override
+def get_username_filename():
+    return '/'
+
+
+@_with_override
+def reuse_sessions():
+    return False
+
+
+@_with_override
+def session_name_template():
+    return 'livy-session-{username}'
+
+
+@_with_override
 def livy_session_startup_timeout_seconds():
     return 60
 
@@ -174,6 +199,16 @@ def coerce_dataframe():
 @_with_override
 def use_auto_viz():
     return True
+
+
+@_with_override
+def local_profile_name():
+    return '__local_profile__.py'
+
+
+@_with_override
+def spark_profile_name():
+    return '__spark_profile__.py'
 
 
 @_with_override

@@ -16,6 +16,7 @@ from sparkmagic.utils.configuration import get_livy_kind
 from sparkmagic.utils.utils import parse_argstring_or_throw, get_coerce_value
 from sparkmagic.utils.sparkevents import SparkEvents
 from sparkmagic.utils.constants import LANGS_SUPPORTED
+from sparkmagic.utils.session_id import get_username
 from sparkmagic.livyclientlib.endpoint import Endpoint
 from sparkmagic.magics.sparkmagicsbase import SparkMagicBase
 from sparkmagic.livyclientlib.exceptions import handle_expected_exceptions, wrap_unexpected_exceptions, \
@@ -330,6 +331,7 @@ class KernelMagics(SparkMagicBase):
         if should_start:
             skip = False
             properties = conf.get_session_properties(self.language)
+            properties['name'] = conf.session_name_template().format(username=get_username())
             self.session_started = True
 
             try:
@@ -349,7 +351,7 @@ class KernelMagics(SparkMagicBase):
         try:
             if self.session_started:
                 self.spark_controller.delete_session_by_name(self.session_name)
-        except:
+        except Exception:
             # The exception will be logged and handled in the frontend.
             raise
         finally:
