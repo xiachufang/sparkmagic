@@ -75,7 +75,7 @@ class Command(ObjectWithGuid):
                 progress.value = statement.get('progress', 0.0)
                 session.sleep(retries)
                 retries += 1
-            else:                
+            else:
                 statement_output = statement[u"output"]
                 progress.close()
 
