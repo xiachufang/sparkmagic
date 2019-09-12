@@ -45,7 +45,7 @@ class SessionIdFileLock(object):
             os.makedirs(os.path.dirname(self.session_id_filename))
         if not os.path.exists(self.session_id_filename):
             self.logger.info('Session id file "{}" does not exist.'.format(self.session_id_filename))
-            with open(self.session_id_filename, 'wb'):
+            with open(self.session_id_filename, 'w'):
                 pass
         self.session_id_file = open(self.session_id_filename)
         fcntl.flock(self.session_id_file.fileno(), fcntl.LOCK_EX)
@@ -70,5 +70,5 @@ class SessionIdFileLock(object):
         self.session_id = session_id
 
     def write_session_id(self):
-        with open(self.session_id_filename, 'wb') as f:
+        with open(self.session_id_filename, 'w') as f:
             f.write(str(self.session_id))
