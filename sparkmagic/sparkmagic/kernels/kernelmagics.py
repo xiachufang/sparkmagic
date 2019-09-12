@@ -317,8 +317,8 @@ class KernelMagics(SparkMagicBase):
                 self.logger.info(u"Error getting state of session: {}".format(e))
                 app_state = 'dead'
                 should_start = True
-            if app_state in ('dead', ''):
-                self.logger.info(u"Last session dead {}. Need to restart.".format(session.id))
+            if app_state in ('dead', '', 'killed', 'error'):
+                self.logger.info(u"Last session {} is {}. Need to restart.".format(session.id, app_state))
                 self.spark_controller.delete_session_by_id(self.endpoint, session.id)
                 should_start = True
             else:
